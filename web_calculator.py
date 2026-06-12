@@ -1,9 +1,15 @@
+
 import streamlit as st
 import pandas as pd
 import numpy_financial as npf
+from io import BytesIO
 
-st.set_page_config(page_title="智算中心融资测算平台", layout="wide")
-st.title("🚀 智算中心融资测算平台 V3.0")
+st.set_page_config(
+    page_title="智算中心融资测算平台",
+    layout="wide"
+)
+
+st.title("🚀 智算中心融资测算平台 V5.0")
 
 st.header("基础参数")
 
@@ -35,6 +41,7 @@ scenarios = {
 }
 
 results = []
+cashflow_data = []
 
 for name, occupancy in scenarios.items():
     b300_income = b300_num * b300_rent * 12 * occupancy / 100000000
@@ -55,7 +62,6 @@ for name, occupancy in scenarios.items():
         income_tax = 0
 
     net_profit = profit_before_tax - income_tax
-
     operating_cashflow = net_profit + depreciation
 
     year_5_cashflow = operating_cashflow + total_investment * residual_rate
@@ -88,12 +94,25 @@ for name, occupancy in scenarios.items():
         "投资回收期(年)": round(payback_period, 2) if payback_period else "无法回收"
     })
 
+    for year in range(1, 6):
+        if year == 5:
+            cashflow = year_5_cashflow
+        else:
+            cashflow = operating_cashflow
+
+        cashflow_data.append({
+            "年份": f"第{year}年",
+            "情景": name,
+            "现金流(亿元)": round(cashflow, 2)
+        })
+
 result_df = pd.DataFrame(results)
+cashflow_df = pd.DataFrame(cashflow_data)
 
 st.header("📊 三档情景测算结果")
-st.dataframe(result_df, use_container_width=True)
+st.dataframe(result_df, width="stretch")
 
-st.header("核心指标对比")
+st.header("核心指标")
 
 col1, col2, col3 = st.columns(3)
 
@@ -117,9 +136,76 @@ st.bar_chart(result_df.set_index("情景")["EBITDA(亿元)"])
 st.subheader("税后净利润对比")
 st.bar_chart(result_df.set_index("情景")["税后净利润(亿元)"])
 
-st.header("导出结果")
+st.header("📈 5年现金流趋势分析")
+st.dataframe(cashflow_df, width="stretch")
 
-if st.button("生成Excel测算表"):
-    output_path = "智算中心三档情景测算结果.xlsx"
-    result_df.to_excel(output_path, index=False)
-    st.success("Excel测算表已生成，请在本地文件夹中查看。")
+cashflow_pivot = cashflow_df.pivot(
+    index="年份",
+    columns="情景",
+    values="现金流(亿元)"
+)
+
+st.line_chart(cashflow_pivot)
+
+st.header("📊 出租率敏感性分析")
+
+sensitivity_data = []
+
+for occ in [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]:
+    b300_income = b300_num * b300_rent * 12 * occ / 100000000
+    h200_income = h200_num * h200_rent * 12 * occ / 100000000
+    total_income = b300_income + h200_income
+
+    opex = total_income * opex_rate
+    ebitda = total_income - opex
+
+    depreciation = total_investment / depreciation_years
+    interest = loan_amount * interest_rate
+
+    profit_before_tax = ebitda - depreciation - interest
+
+    if profit_before_tax > 0:
+        income_tax = profit_before_tax * tax_rate
+    else:
+        income_tax = 0
+
+    net_profit = profit_before_tax - income_tax
+
+    sensitivity_data.append({
+        "出租率": f"{occ:.0%}",
+        "总收入(亿元)": round(total_income, 2),
+        "EBITDA(亿元)": round(ebitda, 2),
+        "税后净利润(亿元)": round(net_profit, 2)
+    })
+
+sensitivity_df = pd.DataFrame(sensitivity_data)
+
+st.dataframe(sensitivity_df, width="stretch")
+
+st.subheader("出租率-EBITDA敏感性图")
+st.line_chart(
+    sensitivity_df.set_index("出租率")["EBITDA(亿元)"]
+)
+
+st.subheader("出租率-税后净利润敏感性图")
+st.line_chart(
+    sensitivity_df.set_index("出租率")["税后净利润(亿元)"]
+)
+
+st.header("📥 导出结果")
+
+excel_buffer = BytesIO()
+
+with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+    result_df.to_excel(writer, index=False, sheet_name="三档情景测算")
+    cashflow_df.to_excel(writer, index=False, sheet_name="5年现金流")
+    sensitivity_df.to_excel(writer, index=False, sheet_name="出租率敏感性")
+
+excel_data = excel_buffer.getvalue()
+
+st.download_button(
+    label="📥 下载Excel测算表",
+    data=excel_data,
+    file_name="智算中心融资测算结果.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
